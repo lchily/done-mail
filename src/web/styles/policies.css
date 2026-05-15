@@ -300,6 +300,10 @@
   min-width: 0;
 }
 
+.mc-policy-rule-boolean-value {
+  grid-column: 2 / 4;
+}
+
 .mc-policy-inline-empty {
   display: flex;
   align-items: center;

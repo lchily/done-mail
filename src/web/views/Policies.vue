@@ -34,10 +34,10 @@ interface LoadPolicyOptions {
 const fieldOptions = [
   { label: '发件人', value: 'from' },
   { label: '发件域名', value: 'fromDomain' },
-  { label: '主题', value: 'subject' },
-  { label: '正文内容', value: 'content' },
   { label: '收件人', value: 'to' },
   { label: '收件域名', value: 'domain' },
+  { label: '主题', value: 'subject' },
+  { label: '正文内容', value: 'content' },
   { label: '有附件', value: 'hasAttachments' },
   { label: '转发接收', value: 'forwarded' }
 ];
@@ -52,6 +52,10 @@ const operatorOptions = [
 const conditionModeOptions = [
   { label: '全部条件命中', value: 'all' },
   { label: '任一条件命中', value: 'any' }
+];
+const booleanValueOptions = [
+  { label: '是', value: 'true' },
+  { label: '否', value: 'false' }
 ];
 
 const methodOptions = ['GET', 'POST'].map((item) => ({ label: item, value: item }));
@@ -174,8 +178,8 @@ function newPolicy(): DraftMailPolicy {
     name: '新建策略',
     enabled: true,
     priority: 0,
-    conditionMode: 'all',
-    stopOnMatch: false,
+    conditionMode: 'any',
+    stopOnMatch: true,
     conditions: [],
     actions: [],
     createdAt: now,
@@ -223,7 +227,7 @@ function normalizePolicy(policy: Partial<MailPolicy | DraftMailPolicy>): DraftMa
   return {
     ...newPolicy(),
     ...policy,
-    conditions: Array.isArray(policy.conditions) ? policy.conditions : [],
+    conditions: Array.isArray(policy.conditions) ? policy.conditions.map(normalizeCondition) : [],
     actions: Array.isArray(policy.actions) ? policy.actions.map(normalizeAction) : []
   };
 }
@@ -232,7 +236,7 @@ function assignDraft(policy: MailPolicy | DraftMailPolicy) {
   Object.assign(draft, {
     ...newPolicy(),
     ...policy,
-    conditions: policy.conditions.map((item) => ({ ...item })),
+    conditions: policy.conditions.map(normalizeCondition),
     actions: policy.actions.map((item) => normalizeAction(item))
   });
   expandedActionId.value = draft.actions[0]?.id || '';
@@ -262,7 +266,12 @@ function serializePolicy(policy: DraftMailPolicy, includeId = false) {
     conditionMode: policy.conditionMode,
     stopOnMatch: policy.stopOnMatch,
     conditions: policy.conditions
-      .map((item) => ({ id: cleanId(item.id), field: item.field, operator: item.operator, value: item.value.trim() }))
+      .map((item) => ({
+        id: cleanId(item.id),
+        field: item.field,
+        operator: isBooleanCondition(item) ? 'equals' : item.operator,
+        value: isBooleanCondition(item) ? booleanConditionValue(item.value) : item.value.trim()
+      }))
       .filter((item) => item.value),
     actions: policy.actions.map((action) => {
       if (action.type === 'forward') {
@@ -458,8 +467,35 @@ function togglePolicyFromList(policy: PolicyListItem) {
   if (isSavedPolicy(policy)) void togglePolicy(policy);
 }
 
+function isBooleanCondition(condition: Pick<PolicyCondition, 'field'>) {
+  return condition.field === 'hasAttachments' || condition.field === 'forwarded';
+}
+
+function booleanConditionValue(value: string) {
+  return value === 'false' ? 'false' : 'true';
+}
+
+function normalizeCondition(condition: PolicyCondition): PolicyCondition {
+  if (!isBooleanCondition(condition)) return { ...condition };
+  return {
+    ...condition,
+    operator: 'equals',
+    value: booleanConditionValue(condition.value)
+  };
+}
+
+function syncCondition(condition: PolicyCondition) {
+  if (!isBooleanCondition(condition)) return;
+  condition.operator = 'equals';
+  condition.value = booleanConditionValue(condition.value);
+}
+
 function conditionLabel(condition: PolicyCondition) {
   const field = fieldOptions.find((item) => item.value === condition.field)?.label || condition.field;
+  if (isBooleanCondition(condition)) {
+    const value = booleanValueOptions.find((item) => item.value === booleanConditionValue(condition.value))?.label || condition.value;
+    return `${field}${value}`;
+  }
   const operator = operatorOptions.find((item) => item.value === condition.operator)?.label || condition.operator;
   return `${field}${operator}${condition.value || '未填写'}`;
 }
@@ -834,9 +870,12 @@ usePageRefresh(() => loadPolicies({}, true));
                 <div class="mc-policy-rule-list">
                   <div v-if="draft.conditions.length === 0" class="mc-policy-inline-empty">未添加条件时匹配全部邮件</div>
                   <div v-for="condition in draft.conditions" :key="condition.id" class="mc-policy-rule-row">
-                    <McCfSelect v-model="condition.field" :options="fieldOptions" select-only />
-                    <McCfSelect v-model="condition.operator" :options="operatorOptions" select-only />
-                    <el-input v-model.trim="condition.value" placeholder="匹配值" />
+                    <McCfSelect v-model="condition.field" :options="fieldOptions" select-only @change="syncCondition(condition)" />
+                    <McCfSelect v-if="isBooleanCondition(condition)" v-model="condition.value" class="mc-policy-rule-boolean-value" :options="booleanValueOptions" select-only @change="syncCondition(condition)" />
+                    <template v-else>
+                      <McCfSelect v-model="condition.operator" :options="operatorOptions" select-only />
+                      <el-input v-model.trim="condition.value" placeholder="匹配值" />
+                    </template>
                     <button type="button" class="mc-icon-action mc-icon-action--danger" aria-label="删除条件" @click="removeCondition(condition.id)"><McIcon name="trash" :size="15" /></button>
                   </div>
                 </div>
