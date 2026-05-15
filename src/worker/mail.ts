@@ -1,7 +1,7 @@
 import PostalMime from 'postal-mime';
 import { getSystemConfig } from './config';
 import { fileContentDisposition } from './http/content-disposition';
-import { buildBodyPreview, buildMailBodyChunks, buildMailContentSearchChunks, buildMailSearchFields } from './mail-content';
+import { buildBodyPreview, buildMailBodyChunks, buildMailContentSearchChunks, buildMailSearchFields, sanitizeMailHtml } from './mail-content';
 import { createMailShare, deleteMailShares } from './mail-share';
 import { runMailPolicies } from './policies';
 import { deleteR2Objects, deleteR2ObjectsBestEffort } from './r2';
@@ -526,6 +526,7 @@ export async function handleIncomingEmail(message: ForwardableEmailMessage, env:
     const statements = [
       env.DB.prepare(`INSERT INTO mails_fts (mail_id, subject, addresses) VALUES (?, ?, ?)`).bind(mailId, searchFields.subject, searchFields.addresses),
       env.DB.prepare(`INSERT INTO mail_bodies (mail_id, headers_json) VALUES (?, ?)`).bind(mailId, JSON.stringify(headers)),
+      env.DB.prepare(`INSERT INTO mail_public_bodies (mail_id, text_body, html_body) VALUES (?, ?, ?)`).bind(mailId, parsed.text || '', sanitizeMailHtml(parsed.html || '')),
       ...bodyChunks.map((chunk) =>
         env.DB.prepare(
           `INSERT INTO mail_body_chunks (mail_id, kind, chunk_index, content)
@@ -644,6 +645,7 @@ export async function deleteMails(env: Env, ids: string[]) {
     env.DB.prepare(`DELETE FROM mails_fts WHERE mail_id IN (${placeholders})`).bind(...uniqueIds),
     env.DB.prepare(`DELETE FROM mail_content_fts WHERE mail_id IN (${placeholders})`).bind(...uniqueIds),
     env.DB.prepare(`DELETE FROM mail_body_chunks WHERE mail_id IN (${placeholders})`).bind(...uniqueIds),
+    env.DB.prepare(`DELETE FROM mail_public_bodies WHERE mail_id IN (${placeholders})`).bind(...uniqueIds),
     env.DB.prepare(`DELETE FROM mail_attachments WHERE mail_id IN (${placeholders})`).bind(...uniqueIds),
     env.DB.prepare(`DELETE FROM mail_bodies WHERE mail_id IN (${placeholders})`).bind(...uniqueIds),
     env.DB.prepare(`DELETE FROM mails WHERE id IN (${placeholders})`).bind(...uniqueIds)
@@ -651,7 +653,7 @@ export async function deleteMails(env: Env, ids: string[]) {
 
   await deleteMailShares(env, uniqueIds).catch((error) => console.error('删除邮件分享记录失败', error));
 
-  return Number(result[5]?.meta.changes || 0);
+  return Number(result[result.length - 1]?.meta.changes || 0);
 }
 
 export async function cleanupExpiredMails(env: Env) {

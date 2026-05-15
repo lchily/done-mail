@@ -1,4 +1,5 @@
 import { migration as v1 } from './0001_init';
+import { migration as v2 } from './0002_public_body_fast_path';
 import type { Migration, MigrationDefinition } from './types';
 
 type MigrationEntry = readonly [version: number, migration: MigrationDefinition];
@@ -35,5 +36,5 @@ function defineMigrations(entries: MigrationEntry[]): Migration[] {
   });
 }
 
-export const migrations = defineMigrations([[1, v1]]);
+export const migrations = defineMigrations([[1, v1], [2, v2]]);
 export type { Migration } from './types';

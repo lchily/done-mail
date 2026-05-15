@@ -3,7 +3,7 @@ import { authStateFromConfig } from './auth';
 import { getAuthConfig, getSystemConfig } from './config';
 import { cleanupExpiredMails, handleIncomingEmail } from './mail';
 import { cleanupExpiredRateLimits, consumeRateLimit, rateLimitIdentityFromRequest } from './http/rate-limit';
-import { ensureMigrated } from './schema';
+import { ensureMigrated, hasSchemaReadyMarker } from './schema';
 import { downloadShareAttachment, renderSharePage, renderShareRateLimitedPage } from './share-page';
 import type { Env } from './types';
 
@@ -47,13 +47,43 @@ async function consumeShareAccessRateLimit(req: Request, env: Env) {
   return consumeRateLimit(env, 'publicShare', rateLimitIdentityFromRequest(req), system.rateLimit.publicShare);
 }
 
+function schemaInitializingResponse() {
+  return new Response(
+    JSON.stringify({
+      ok: false,
+      error: { code: 'schema_initializing', message: '数据库正在初始化，请稍后重试' }
+    }),
+    {
+      status: 503,
+      headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Retry-After': '3'
+      }
+    }
+  );
+}
+
+async function apiReadyOrScheduleMigration(env: Env, ctx: ExecutionContext) {
+  if (await hasSchemaReadyMarker(env)) return true;
+  ctx.waitUntil(ensureMigrated(env).catch((error) => console.error('API schema migration failed', error)));
+  return false;
+}
+
 export default {
   async fetch(req: Request, env: Env, ctx: ExecutionContext) {
     const url = new URL(req.url);
     if (req.method === 'GET' && isStaticPath(url.pathname)) {
       return env.ASSETS.fetch(req);
     }
+
     if (!(await originAllowed(req, env, url))) return notFound();
+
+    if (url.pathname.startsWith('/api/')) {
+      if (url.pathname !== '/api/health' && !(await apiReadyOrScheduleMigration(env, ctx))) {
+        return schemaInitializingResponse();
+      }
+      return app.fetch(req, env, ctx);
+    }
 
     const shareAttachmentMatch = /^\/mail\/([^/]+)\/attachments\/([^/]+)$/.exec(url.pathname);
     if (shareAttachmentMatch) {
@@ -65,13 +95,8 @@ export default {
     if (sharePageMatch) {
       await ensureMigrated(env);
       if (await consumeShareAccessRateLimit(req, env)) return renderShareRateLimitedPage();
-      return renderSharePage(env, decodeURIComponent(sharePageMatch[1]), url.searchParams.get('remote') === '1');
-    }
-    if (url.pathname.startsWith('/api/')) {
-      if (url.pathname !== '/api/health') {
-        await ensureMigrated(env);
-      }
-      return app.fetch(req, env, ctx);
+      const allowRemoteImages = url.searchParams.get('remote') === 'true';
+      return renderSharePage(env, decodeURIComponent(sharePageMatch[1]), allowRemoteImages);
     }
     return env.ASSETS.fetch(req);
   },

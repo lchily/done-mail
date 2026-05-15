@@ -4,7 +4,9 @@ import type { Env } from './types';
 const migrationLeaseMs = 30_000;
 const migrationPollMs = 250;
 const migrationWaitMs = 10_000;
+const schemaReadyKey = 'schema:ready';
 const schemaReady = new WeakMap<Env, Promise<void>>();
+const schemaReadyMarker = new WeakMap<Env, true>();
 
 interface MigrationRow {
   version: number;
@@ -86,6 +88,20 @@ async function hasPendingMigrations(env: Env) {
   return false;
 }
 
+function latestMigrationVersion() {
+  return migrations[migrations.length - 1]?.version || 0;
+}
+
+export async function hasSchemaReadyMarker(env: Env) {
+  if (schemaReadyMarker.get(env)) return true;
+  const value = await env.KV.get(schemaReadyKey);
+  if (value === String(latestMigrationVersion())) {
+    schemaReadyMarker.set(env, true);
+    return true;
+  }
+  return false;
+}
+
 async function waitForMigration(env: Env) {
   const deadline = Date.now() + migrationWaitMs;
   while (Date.now() < deadline) {
@@ -133,7 +149,11 @@ export async function ensureMigrated(env: Env) {
 
 async function ensureMigratedOnce(env: Env) {
   await ensureMigrationTables(env);
-  if (!(await hasPendingMigrations(env))) return;
+  if (!(await hasPendingMigrations(env))) {
+    await env.KV.put(schemaReadyKey, String(latestMigrationVersion()));
+    schemaReadyMarker.set(env, true);
+    return;
+  }
 
   const owner = crypto.randomUUID();
   if (!(await acquireMigrationLock(env, owner))) {
@@ -143,6 +163,8 @@ async function ensureMigratedOnce(env: Env) {
 
   try {
     await applyPendingMigrations(env);
+    await env.KV.put(schemaReadyKey, String(latestMigrationVersion()));
+    schemaReadyMarker.set(env, true);
   } finally {
     await releaseMigrationLock(env, owner).catch(() => undefined);
   }

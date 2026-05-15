@@ -12,7 +12,7 @@ X-Admin-Key: your-admin-key
 | 参数 | 说明 |
 | --- | --- |
 | `id` | 邮件 ID，对应邮件列表返回的 `data[].id` |
-| `attachmentId` | 附件 ID，对应邮件列表返回的 `data[].attachments[].id` |
+| `attachmentId` | 附件 ID，对应 `GET /api/mails?includeAttachments=true` 返回的 `data[].attachments[].id` |
 
 ## 成功响应
 

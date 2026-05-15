@@ -23,6 +23,14 @@ export function normalizeSearchKeyword(value: string) {
   return value.trim();
 }
 
+export function parseBooleanQuery(value: string | undefined, name: string) {
+  if (value === undefined) return null;
+  const normalized = value.trim();
+  if (normalized === 'true') return true;
+  if (normalized === 'false') return false;
+  throw new Error(`${name} 仅支持 true 或 false`);
+}
+
 export function parseBatchIds(body: unknown) {
   const rawIds = body && typeof body === 'object' ? (body as { ids?: unknown }).ids : [];
   return Array.isArray(rawIds) ? [...new Set(rawIds.map((item) => String(item).trim()).filter(Boolean))] : [];

@@ -14,6 +14,7 @@ function createKv(initial: Record<string, string> = {}) {
       return store.get(key) || null;
     },
     put: async (key: string, value: string) => {
+      calls.push(`put:${key}`);
       store.set(key, value);
     },
     delete: async (key: string) => {
@@ -139,6 +140,17 @@ describe('worker entry guard', () => {
     expect(response.status).toBe(200);
   });
 
+  it('分享入口不暴露 API', async () => {
+    const env = await createEnv({
+      adminBaseUrl: 'https://admin.example.com',
+      shareBaseUrl: 'https://share.example.com'
+    });
+
+    const response = await worker.fetch(new Request('https://share.example.com/api/mails'), env, ctx);
+
+    expect(response.status).toBe(404);
+  });
+
   it('静态资源直接走 Assets，不读取入口配置', async () => {
     const kv = createKv();
     const env = {
@@ -154,6 +166,24 @@ describe('worker entry guard', () => {
     expect(response.status).toBe(200);
     await expect(response.text()).resolves.toBe('/assets/index.js');
     expect(kv.calls).toEqual([]);
+  });
+
+  it('未限制入口的 API 请求不读取系统配置，数据库未就绪时快速返回初始化中', async () => {
+    const kv = createKv();
+    const env = {
+      KV: kv,
+      DB: createDb(),
+      ASSETS: {
+        fetch: async (req: Request) => new Response(new URL(req.url).pathname, { status: 200 })
+      }
+    } as unknown as Env;
+
+    const response = await worker.fetch(new Request('https://share.example.com/api/mails'), env, ctx);
+
+    expect(response.status).toBe(503);
+    expect(response.headers.get('Retry-After')).toBe('3');
+    await expect(response.json()).resolves.toMatchObject({ error: { code: 'schema_initializing' } });
+    expect(kv.calls).not.toContain('config:system');
   });
 
   it('分享页访问使用分享链接访问限流', async () => {

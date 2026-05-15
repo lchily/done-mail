@@ -69,6 +69,9 @@ function normalizeConditions(value: unknown): PolicyCondition[] {
       const operator = conditionOperators.has(input.operator as PolicyConditionOperator) ? (input.operator as PolicyConditionOperator) : 'contains';
       const value = String(input.value || '').trim();
       if (!value) return null;
+      if (field === 'hasAttachments' || field === 'forwarded') {
+        if (value !== 'true' && value !== 'false') throw new Error(`${field} 仅支持 true 或 false`);
+      }
       return {
         id: String(input.id || createId('condition')),
         field,

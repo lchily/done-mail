@@ -77,7 +77,7 @@ function createDeleteEnv(options: { r2Fails?: boolean; batchFails?: boolean; del
   const batch = vi.fn(async (statements: unknown[]) => {
     events.push('batch');
     if (options.batchFails) throw new Error('D1 delete failed');
-    return statements.map((_, index) => ({ meta: { changes: index === 5 ? options.deleted ?? 1 : 0 } }));
+    return statements.map((_, index) => ({ meta: { changes: index === statements.length - 1 ? options.deleted ?? 1 : 0 } }));
   });
 
   return {
@@ -93,6 +93,7 @@ function createDeleteEnv(options: { r2Fails?: boolean; batchFails?: boolean; del
     } as unknown as Env,
     bucketDelete,
     events,
+    prepare,
     batch
   };
 }
@@ -153,6 +154,10 @@ describe('incoming mail', () => {
 
     const bodyStatement = statements.find((item) => item.sql.includes('INSERT INTO mail_bodies'));
     expect(bodyStatement?.params[1]).toContain('from');
+
+    const publicBodyStatement = statements.find((item) => item.sql.includes('INSERT INTO mail_public_bodies'));
+    expect(publicBodyStatement?.params[1]).toContain('Your invoice is ready');
+    expect(String(publicBodyStatement?.params[2])).not.toContain('<script');
 
     const bodyChunkStatement = statements.find((item) => item.sql.includes('INSERT INTO mail_body_chunks') && item.params[1] === 'text');
     expect(bodyChunkStatement?.params[3]).toContain('Your invoice is ready');
@@ -216,13 +221,14 @@ describe('incoming mail', () => {
   });
 
   it('删除收件箱邮件时先删 R2 附件，再删除 D1 记录', async () => {
-    const { env, bucketDelete, events } = createDeleteEnv({ deleted: 2 });
+    const { env, bucketDelete, events, prepare } = createDeleteEnv({ deleted: 2 });
 
     await expect(deleteMails(env, ['mail_1'])).resolves.toBe(2);
 
     expect(events.indexOf('batch')).toBeGreaterThanOrEqual(0);
     expect(events.indexOf('r2:mail/mail_1/a.txt')).toBeLessThan(events.indexOf('batch'));
     expect(bucketDelete).toHaveBeenCalledWith('mail/mail_1/a.txt');
+    expect(prepare.mock.calls.some(([sql]) => String(sql).includes('DELETE FROM mail_public_bodies'))).toBe(true);
   });
 
   it('删除收件箱邮件时 R2 失败不会删除 D1 记录', async () => {

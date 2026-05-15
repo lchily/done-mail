@@ -1,11 +1,11 @@
 import { Hono, type Context } from 'hono';
-import { buildFtsTerms } from '../mail-content';
-import { listMailBodies } from '../mail-bodies';
+import { buildFtsQuery, buildFtsTerms } from '../mail-content';
+import { listPublicMailBodies } from '../mail-bodies';
 import { deleteMails } from '../mail';
 import { getMailAttachmentResponse } from '../mail-attachments';
 import { createMailShare, getMailDetailView } from '../mail-share';
 import { publicFail, publicOk } from '../http/public-response';
-import { encodeCursor, mailPageSize, maxBatchDeleteSize, normalizeSearchKeyword, pageSize, parseBatchIds, parseCursor } from '../http/query';
+import { encodeCursor, mailPageSize, maxBatchDeleteSize, normalizeSearchKeyword, pageSize, parseBatchIds, parseBooleanQuery, parseCursor } from '../http/query';
 import type { Env } from '../types';
 import { apiOk, jsonFail } from '../utils';
 
@@ -46,6 +46,7 @@ interface PublicMailListQuery {
   to?: string;
   from?: string;
   hasAttachments?: boolean | null;
+  includeAttachments?: boolean;
 }
 const mailListSelect = `mails.id, mails.message_id AS messageId, mails.from_addr AS fromAddr, mails.from_name AS fromName,
        mails.to_addr AS toAddr, mails.domain, mails.received_by_addr AS receivedByAddr, mails.is_forwarded AS isForwarded,
@@ -63,16 +64,33 @@ function intersectSql(items: string[]) {
   return items.join('\nINTERSECT\n');
 }
 
-function mailSearchTermCtes(terms: string[]) {
-  return terms.map((_, index) => `term_${index} AS (
-    SELECT mail_id FROM mails_fts WHERE mails_fts MATCH ?
-    UNION
-    SELECT mail_id FROM mail_content_fts WHERE mail_content_fts MATCH ?
-  )`);
+function sharedMailMatchSql(keyword: string, params: string[]) {
+  const terms = keyword ? buildFtsTerms(keyword) : [];
+  if (!terms.length) return '';
+  const matches = terms.map(() => `SELECT mail_id FROM (
+  SELECT mail_id FROM mails_fts WHERE mails_fts MATCH ?
+UNION
+  SELECT DISTINCT mail_id FROM mail_content_fts WHERE mail_content_fts MATCH ?
+)`);
+  params.push(...terms.flatMap((term) => [term, term]));
+  return intersectSql(matches);
 }
 
-function mailSearchIntersection(terms: string[]) {
-  return intersectSql(terms.map((_, index) => `SELECT mail_id FROM term_${index}`));
+function publicMailMatchSql(subject: string, content: string, params: string[]) {
+  const match: string[] = [];
+  const subjectQuery = subject ? buildFtsQuery(subject, 'subject') : '';
+  const contentQuery = content ? buildFtsQuery(content) : '';
+
+  if (subjectQuery) {
+    match.push(`SELECT mail_id FROM mails_fts WHERE mails_fts MATCH ?`);
+    params.push(subjectQuery);
+  }
+  if (contentQuery) {
+    match.push(`SELECT DISTINCT mail_id FROM mail_content_fts WHERE mail_content_fts MATCH ?`);
+    params.push(contentQuery);
+  }
+
+  return match.length ? intersectSql(match) : '';
 }
 
 function mapMailRow(row: Record<string, unknown>) {
@@ -108,11 +126,11 @@ async function listMailRows(env: Env, query: MailListQuery) {
   }
 
   const limit = query.perPage + 1;
-  const ftsTerms = keyword ? buildFtsTerms(keyword) : [];
-  const sql = ftsTerms.length
-    ? `WITH ${mailSearchTermCtes(ftsTerms).join(',\n')},
-       matched AS (
-         ${mailSearchIntersection(ftsTerms)}
+  const matchParams: string[] = [];
+  const matchSql = sharedMailMatchSql(keyword, matchParams);
+  const sql = matchSql
+    ? `WITH matched AS (
+         ${matchSql}
        )
        SELECT ${mailListSelect}
        FROM matched
@@ -125,8 +143,7 @@ async function listMailRows(env: Env, query: MailListQuery) {
        ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
        ORDER BY mails.received_at DESC, mails.id DESC
        LIMIT ?`;
-  const matchParams = ftsTerms.flatMap((term) => [term, term]);
-  const bindParams = ftsTerms.length ? [...matchParams, ...params, limit] : [...params, limit];
+  const bindParams = matchSql ? [...matchParams, ...params, limit] : [...params, limit];
   const rows = await env.DB.prepare(
     sql
   )
@@ -181,19 +198,9 @@ async function listPublicMailRows(env: Env, query: PublicMailListQuery) {
   const cursor = parseCursor(query.cursor || '');
   const subject = normalizeSearchKeyword(query.subject || '');
   const content = normalizeSearchKeyword(query.content || '');
-  const match: string[] = [];
   const matchParams: string[] = [];
-  const subjectTerms = subject ? buildFtsTerms(subject, 'subject') : [];
-  const contentTerms = content ? buildFtsTerms(content) : [];
+  const matchSql = publicMailMatchSql(subject, content, matchParams);
 
-  if (subjectTerms.length) {
-    match.push(intersectSql(subjectTerms.map(() => `SELECT mail_id FROM mails_fts WHERE mails_fts MATCH ?`)));
-    matchParams.push(...subjectTerms);
-  }
-  if (contentTerms.length) {
-    match.push(intersectSql(contentTerms.map(() => `SELECT mail_id FROM mail_content_fts WHERE mail_content_fts MATCH ?`)));
-    matchParams.push(...contentTerms);
-  }
   pushMailFilters(where, params, query);
   if (cursor) {
     where.push(`(mails.received_at < ? OR (mails.received_at = ? AND mails.id < ?))`);
@@ -201,9 +208,9 @@ async function listPublicMailRows(env: Env, query: PublicMailListQuery) {
   }
 
   const limit = query.perPage + 1;
-  const sql = match.length
+  const sql = matchSql
     ? `WITH matched AS (
-         ${intersectSql(match)}
+         ${matchSql}
        ),
        page AS (
          SELECT ${mailListSelect}
@@ -226,7 +233,7 @@ async function listPublicMailRows(env: Env, query: PublicMailListQuery) {
        SELECT ${publicMailPageSelect}
        FROM page AS mails
        ORDER BY ${publicMailPageOrder}`;
-  const bindParams = match.length ? [...matchParams, ...params, limit] : [...params, limit];
+  const bindParams = matchSql ? [...matchParams, ...params, limit] : [...params, limit];
   const rows = await env.DB.prepare(sql)
     .bind(...bindParams)
     .all<Record<string, unknown>>();
@@ -242,9 +249,9 @@ async function listPublicMailRows(env: Env, query: PublicMailListQuery) {
   if (pageItems.length > 0) {
     const placeholders = pageItems.map(() => '?').join(', ');
     const mailIds = pageItems.map((item) => item.id);
-    const [bodies, attachmentRows] = await Promise.all([
-      listMailBodies(env, mailIds),
-      env.DB.prepare(
+    const bodiesPromise = listPublicMailBodies(env, mailIds);
+    const attachmentRowsPromise = query.includeAttachments
+      ? env.DB.prepare(
         `SELECT id, mail_id AS mailId, filename, mime_type AS mimeType, size, content_id AS contentId,
                 disposition, stored
          FROM mail_attachments
@@ -253,7 +260,8 @@ async function listPublicMailRows(env: Env, query: PublicMailListQuery) {
       )
         .bind(...mailIds)
         .all<Record<string, unknown>>()
-    ]);
+      : Promise.resolve({ results: [] as Record<string, unknown>[] });
+    const [bodies, attachmentRows] = await Promise.all([bodiesPromise, attachmentRowsPromise]);
     const attachmentsByMail = new Map<string, PublicMailAttachment[]>();
     for (const row of attachmentRows.results || []) {
       const attachment = mapPublicMailAttachment(row);
@@ -276,15 +284,8 @@ async function listPublicMailRows(env: Env, query: PublicMailListQuery) {
   };
 }
 
-function booleanQuery(value: string | undefined) {
-  const normalized = String(value || '').trim().toLowerCase();
-  if (['true', '1', 'yes'].includes(normalized)) return true;
-  if (['false', '0', 'no'].includes(normalized)) return false;
-  return null;
-}
-
-function publicMailFullItem(mail: PublicMailRow) {
-  return {
+function publicMailFullItem(mail: PublicMailRow, includeAttachments = false) {
+  const item = {
     id: mail.id,
     messageId: mail.messageId,
     from: mail.fromAddr,
@@ -296,6 +297,14 @@ function publicMailFullItem(mail: PublicMailRow) {
     preview: mail.bodyPreview,
     text: mail.textBody,
     html: mail.htmlBody,
+    hasAttachments: mail.hasAttachments,
+    attachmentCount: mail.attachmentCount,
+    size: mail.rawSize,
+    receivedAt: mail.receivedAt
+  };
+  if (!includeAttachments) return item;
+  return {
+    ...item,
     attachments: mail.attachments.map((attachment) => ({
       id: attachment.id,
       filename: attachment.filename,
@@ -304,11 +313,7 @@ function publicMailFullItem(mail: PublicMailRow) {
       contentId: attachment.contentId,
       disposition: attachment.disposition,
       stored: attachment.stored
-    })),
-    hasAttachments: mail.hasAttachments,
-    attachmentCount: mail.attachmentCount,
-    size: mail.rawSize,
-    receivedAt: mail.receivedAt
+    }))
   };
 }
 
@@ -319,7 +324,14 @@ async function listPublicMails(c: AppContext) {
   const toDomain = (c.req.query('toDomain') || '').trim().toLowerCase();
   const subject = normalizeSearchKeyword(c.req.query('subject') || '');
   const content = normalizeSearchKeyword(c.req.query('content') || '');
-  const hasAttachments = booleanQuery(c.req.query('hasAttachments'));
+  let hasAttachments: boolean | null;
+  let includeAttachments: boolean;
+  try {
+    hasAttachments = parseBooleanQuery(c.req.query('hasAttachments'), 'hasAttachments');
+    includeAttachments = parseBooleanQuery(c.req.query('includeAttachments'), 'includeAttachments') === true;
+  } catch (error) {
+    return publicFail(c, error instanceof Error ? error.message : '布尔参数格式错误', 400, 'invalid_boolean');
+  }
   const page = await listPublicMailRows(c.env, {
     perPage,
     cursor: (c.req.query('cursor') || '').trim(),
@@ -328,10 +340,11 @@ async function listPublicMails(c: AppContext) {
     from,
     to,
     domain: toDomain,
-    hasAttachments
+    hasAttachments,
+    includeAttachments
   });
 
-  return publicOk(c, page.items.map(publicMailFullItem), {
+  return publicOk(c, page.items.map((item) => publicMailFullItem(item, includeAttachments)), {
     limit: perPage,
     nextCursor: page.nextCursor,
     hasMore: page.hasMore

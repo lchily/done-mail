@@ -150,6 +150,16 @@ describe('mail policies', () => {
     expect(updated.name).toBe('Stripe 更新');
   });
 
+  it('策略布尔条件只接受 true 或 false', async () => {
+    const env = createEnv();
+
+    await expect(createPolicy(env, {
+      name: '非法条件布尔',
+      conditions: [{ field: 'hasAttachments', operator: 'equals', value: '1' }],
+      actions: [{ type: 'httpRequest', name: '请求', method: 'POST', url: 'http://localhost/hook' }]
+    })).rejects.toThrow('hasAttachments 仅支持 true 或 false');
+  });
+
   it('拒绝过期版本覆盖策略', async () => {
     const env = createEnv();
     const created = await createPolicy(env, {

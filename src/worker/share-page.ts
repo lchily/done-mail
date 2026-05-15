@@ -75,7 +75,7 @@ function attachmentUrl(token: string, attachment: MailAttachmentView) {
 
 function sharePageUrl(token: string, allowRemoteImages: boolean) {
   const path = `/mail/${encodeURIComponent(token)}`;
-  return allowRemoteImages ? `${path}?remote=1` : path;
+  return allowRemoteImages ? `${path}?remote=true` : path;
 }
 
 function hasRemoteImages(html: string) {

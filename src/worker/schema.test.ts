@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ensureMigrated } from './schema';
+import { ensureMigrated, hasSchemaReadyMarker } from './schema';
 import { migrations } from './migrations';
 import appHandler from './index';
 import type { Env } from './types';
@@ -122,6 +122,16 @@ describe('schema migrations', () => {
     for (const migration of migrations) {
       expect(applied.has(migration.version)).toBe(true);
     }
+    expect(calls.some((call) => call.sql.includes('CREATE TABLE IF NOT EXISTS mail_public_bodies'))).toBe(true);
+  });
+
+  it('迁移完成后写入 schema ready marker，公开 API 可快速判定', async () => {
+    const { env } = createEnv();
+
+    await ensureMigrated(env);
+
+    await expect(hasSchemaReadyMarker(env)).resolves.toBe(true);
+    expect(env.KV.put).toHaveBeenCalledWith('schema:ready', String(migrations[migrations.length - 1].version));
   });
 
   it('同一个环境已迁移后不再查 D1', async () => {

@@ -73,6 +73,8 @@ X-Admin-Key: your-admin-key
 | 状态码 | code | 说明 |
 | --- | --- | --- |
 | `401` | `unauthorized` | `X-Admin-Key` 缺失或错误 |
+| `400` | `invalid_boolean` | 布尔查询参数必须使用 `true` 或 `false` |
+| `503` | `schema_initializing` | 数据库正在初始化，请按 `Retry-After` 稍后重试 |
 | `428` | `SETUP_REQUIRED` | 系统尚未初始化 |
 | `429` | `rate_limited` | 鉴权失败请求过于频繁 |
 

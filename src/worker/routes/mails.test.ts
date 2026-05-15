@@ -138,7 +138,7 @@ function createEnv() {
 }
 
 describe('public mails route', () => {
-  it('公开邮件查询走字段化 FTS，不使用 LIKE，且列表返回正文和附件元信息', async () => {
+  it('公开邮件查询走字段化 FTS，不使用 LIKE，且默认不查附件元信息', async () => {
     const { env, calls } = createEnv();
     const cursor = btoa(JSON.stringify({ receivedAt: '2026-07-01T00:00:00.000Z', id: 'mail_3' }));
     const url = new URL('https://example.com/');
@@ -154,7 +154,7 @@ describe('public mails route', () => {
     const response = await publicMailsRoutes.fetch(new Request(url), env);
     const body = await response.json() as {
       ok: boolean;
-      data: Array<{ id: string; text: string; html: string; attachments: Array<{ id: string; stored: boolean }> }>;
+      data: Array<{ id: string; text: string; html: string; attachments?: Array<{ id: string; stored: boolean }> }>;
       pagination: { limit: number; hasMore: boolean; nextCursor: string };
     };
 
@@ -164,13 +164,16 @@ describe('public mails route', () => {
     expect(body.data[0]).toMatchObject({ id: 'mail_2' });
     expect(body.data[0].text).toBe('六月完整正文');
     expect(body.data[0].html).toBe('<p>六月完整正文</p>');
-    expect(body.data[0].attachments).toEqual([expect.objectContaining({ id: 'att_1', stored: true })]);
+    expect(body.data[0]).not.toHaveProperty('attachments');
     expect(body.pagination).toMatchObject({ limit: 1, hasMore: true });
     expect(body.pagination.nextCursor).toBeTruthy();
 
     const listCall = calls[0];
+    expect(calls.some((call) => call.sql.includes('FROM mail_attachments'))).toBe(false);
     expect(listCall.sql).toContain('mails_fts MATCH ?');
     expect(listCall.sql).toContain('mail_content_fts MATCH ?');
+    expect(listCall.sql).toContain('INTERSECT');
+    expect(listCall.sql).not.toContain('term_0');
     expect(listCall.sql).not.toContain('LEFT JOIN mail_bodies');
     expect(listCall.sql).toContain('mails.from_addr = ?');
     expect(listCall.sql).toContain('mails.to_addr = ?');
@@ -180,9 +183,9 @@ describe('public mails route', () => {
     expect(listCall.sql.toLowerCase()).not.toContain(' like ');
     expect(String(listCall.params[0])).toContain('subject : "invoice"*');
     expect(String(listCall.params[1])).toContain('"完整"*');
-    expect(String(listCall.params[2])).toContain('"正文"*');
-    expect(String(listCall.params[3])).toContain('"整正"*');
-    expect(listCall.params.slice(4)).toEqual([
+    expect(String(listCall.params[1])).toContain('"正文"*');
+    expect(String(listCall.params[1])).toContain('"整正"*');
+    expect(listCall.params.slice(2)).toEqual([
       'billing@stripe.example',
       'pay@example.com',
       'example.com',
@@ -192,6 +195,57 @@ describe('public mails route', () => {
       'mail_3',
       2
     ]);
+  });
+
+  it('公开邮件列表只有 includeAttachments=true 时返回附件元信息', async () => {
+    const { env, calls } = createEnv();
+
+    const response = await publicMailsRoutes.fetch(new Request('https://example.com/?includeAttachments=true'), env);
+    const body = await response.json() as {
+      data: Array<{ id: string; attachments: Array<{ id: string; stored: boolean }> }>;
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.data[0].attachments).toEqual([expect.objectContaining({ id: 'att_1', stored: true })]);
+    expect(calls.some((call) => call.sql.includes('FROM mail_attachments'))).toBe(true);
+  });
+
+  it('公开邮件布尔参数不接受 0、1、yes、no 别名', async () => {
+    const { env, calls } = createEnv();
+
+    const response = await publicMailsRoutes.fetch(new Request('https://example.com/?includeAttachments=1&hasAttachments=yes'), env);
+    const body = await response.json() as {
+      ok: boolean;
+      error: { code: string; message: string };
+    };
+
+    expect(response.status).toBe(400);
+    expect(body).toMatchObject({ ok: false, error: { code: 'invalid_boolean' } });
+    expect(body.error.message).toContain('hasAttachments');
+    expect(calls).toHaveLength(0);
+  });
+
+  it('内部关键词搜索保留逐词跨主题和正文命中语义，不按词生成 CTE', async () => {
+    const { env, calls } = createEnv();
+
+    const response = await mailsRoutes.fetch(new Request('https://example.com/?keyword=Invoice 完整正文'), env);
+
+    expect(response.status).toBe(200);
+    const listCall = calls[0];
+    expect(listCall.sql).toContain('mails_fts MATCH ?');
+    expect(listCall.sql).toContain('mail_content_fts MATCH ?');
+    expect(listCall.sql).toContain('INTERSECT');
+    expect(listCall.sql.match(/UNION/g)).toHaveLength(4);
+    expect(listCall.sql).not.toContain('term_0');
+    expect(listCall.sql).not.toContain('term_1');
+    expect(String(listCall.params[0])).toContain('"invoice"*');
+    expect(String(listCall.params[1])).toContain('"invoice"*');
+    expect(String(listCall.params[2])).toContain('"完整"*');
+    expect(String(listCall.params[3])).toContain('"完整"*');
+    expect(String(listCall.params[4])).toContain('"正文"*');
+    expect(String(listCall.params[5])).toContain('"正文"*');
+    expect(String(listCall.params[6])).toContain('"整正"*');
+    expect(String(listCall.params[7])).toContain('"整正"*');
   });
 
   it('公开邮件列表默认返回正文并限制单页大小', async () => {

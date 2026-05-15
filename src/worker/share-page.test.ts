@@ -120,7 +120,8 @@ describe('share page', () => {
     expect(html).not.toContain("img-src data: cid: https:");
     expect(html).toContain('已隐藏远程图片');
     expect(html).toContain('/mail/');
-    expect(html).toContain('?remote=1');
+    expect(html).toContain('?remote=true');
+    expect(html).not.toContain('?remote=1');
     expect(html).toContain('img[src^=&quot;https://&quot;]');
     expect(html).not.toContain('allow-same-origin');
     expect(html).not.toContain('<script>');
