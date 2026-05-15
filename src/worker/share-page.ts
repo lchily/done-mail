@@ -169,8 +169,8 @@ export function renderShareRateLimitedPage() {
   return htmlResponse(renderShell('访问过于频繁', '<section class="card state"><div><h1>访问过于频繁</h1><p>请稍后再打开这封邮件分享。</p></div></section>'), 429);
 }
 
-export async function renderSharePage(env: Env, token: string, allowRemoteImages = false) {
-  const detail = await getSharedMailDetail(env, token);
+export async function renderSharePage(env: Env, token: string, allowRemoteImages = false, waitUntil?: (promise: Promise<unknown>) => void) {
+  const detail = await getSharedMailDetail(env, token, { waitUntil });
   if (!detail) return htmlResponse(renderExpiredPage(), 404);
 
   const { mail, share } = detail;

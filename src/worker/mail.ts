@@ -526,7 +526,7 @@ export async function handleIncomingEmail(message: ForwardableEmailMessage, env:
     const statements = [
       env.DB.prepare(`INSERT INTO mails_fts (mail_id, subject, addresses) VALUES (?, ?, ?)`).bind(mailId, searchFields.subject, searchFields.addresses),
       env.DB.prepare(`INSERT INTO mail_bodies (mail_id, headers_json) VALUES (?, ?)`).bind(mailId, JSON.stringify(headers)),
-      env.DB.prepare(`INSERT INTO mail_public_bodies (mail_id, text_body, html_body) VALUES (?, ?, ?)`).bind(mailId, parsed.text || '', sanitizeMailHtml(parsed.html || '')),
+      env.DB.prepare(`INSERT INTO mail_safe_bodies (mail_id, text_body, html_body) VALUES (?, ?, ?)`).bind(mailId, parsed.text || '', sanitizeMailHtml(parsed.html || '')),
       ...bodyChunks.map((chunk) =>
         env.DB.prepare(
           `INSERT INTO mail_body_chunks (mail_id, kind, chunk_index, content)
@@ -645,7 +645,7 @@ export async function deleteMails(env: Env, ids: string[]) {
     env.DB.prepare(`DELETE FROM mails_fts WHERE mail_id IN (${placeholders})`).bind(...uniqueIds),
     env.DB.prepare(`DELETE FROM mail_content_fts WHERE mail_id IN (${placeholders})`).bind(...uniqueIds),
     env.DB.prepare(`DELETE FROM mail_body_chunks WHERE mail_id IN (${placeholders})`).bind(...uniqueIds),
-    env.DB.prepare(`DELETE FROM mail_public_bodies WHERE mail_id IN (${placeholders})`).bind(...uniqueIds),
+    env.DB.prepare(`DELETE FROM mail_safe_bodies WHERE mail_id IN (${placeholders})`).bind(...uniqueIds),
     env.DB.prepare(`DELETE FROM mail_attachments WHERE mail_id IN (${placeholders})`).bind(...uniqueIds),
     env.DB.prepare(`DELETE FROM mail_bodies WHERE mail_id IN (${placeholders})`).bind(...uniqueIds),
     env.DB.prepare(`DELETE FROM mails WHERE id IN (${placeholders})`).bind(...uniqueIds)

@@ -74,6 +74,7 @@ function createEnv() {
   const prepare = vi.fn((sql: string) => ({
     bind: vi.fn(() => ({
       first: vi.fn(async () => {
+        if (sql.includes('FROM mail_safe_bodies')) return null;
         if (sql.includes('FROM mail_bodies')) return body;
         return mail;
       }),
@@ -83,7 +84,7 @@ function createEnv() {
   return {
     env: {
       KV: kv.KV,
-      DB: { prepare }
+      DB: { prepare, batch: vi.fn(async () => []) }
     } as unknown as Env,
     kv,
     prepare
@@ -125,7 +126,9 @@ describe('mail share', () => {
 
     const detail = await getSharedMailDetail(env, share.token);
     expect(detail?.mail.subject).toBe('主题');
-    expect(prepare).toHaveBeenCalledTimes(5);
+    expect(prepare.mock.calls.some(([sql]) => String(sql).includes('FROM mail_safe_bodies'))).toBe(true);
+    expect(prepare.mock.calls.some(([sql]) => String(sql).includes('FROM mail_body_chunks'))).toBe(true);
+    expect(prepare.mock.calls.some(([sql]) => String(sql).includes('FROM mail_attachments'))).toBe(true);
   });
 
   it('分享详情只返回附件视图字段，不暴露 R2 objectKey', async () => {

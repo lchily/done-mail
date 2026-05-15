@@ -1,6 +1,6 @@
 import { Hono, type Context } from 'hono';
 import { buildFtsQuery, buildFtsTerms } from '../mail-content';
-import { listPublicMailBodies } from '../mail-bodies';
+import { listSafeMailBodies } from '../mail-bodies';
 import { deleteMails } from '../mail';
 import { getMailAttachmentResponse } from '../mail-attachments';
 import { createMailShare, getMailDetailView } from '../mail-share';
@@ -47,6 +47,7 @@ interface PublicMailListQuery {
   from?: string;
   hasAttachments?: boolean | null;
   includeAttachments?: boolean;
+  waitUntil?: (promise: Promise<unknown>) => void;
 }
 const mailListSelect = `mails.id, mails.message_id AS messageId, mails.from_addr AS fromAddr, mails.from_name AS fromName,
        mails.to_addr AS toAddr, mails.domain, mails.received_by_addr AS receivedByAddr, mails.is_forwarded AS isForwarded,
@@ -192,6 +193,15 @@ function mapPublicMailAttachment(row: Record<string, unknown>): PublicMailAttach
   };
 }
 
+function waitUntilFromContext(c: AppContext) {
+  try {
+    const executionCtx = c.executionCtx;
+    return (promise: Promise<unknown>) => executionCtx.waitUntil(promise);
+  } catch {
+    return undefined;
+  }
+}
+
 async function listPublicMailRows(env: Env, query: PublicMailListQuery) {
   const where: string[] = [];
   const params: unknown[] = [];
@@ -249,7 +259,7 @@ async function listPublicMailRows(env: Env, query: PublicMailListQuery) {
   if (pageItems.length > 0) {
     const placeholders = pageItems.map(() => '?').join(', ');
     const mailIds = pageItems.map((item) => item.id);
-    const bodiesPromise = listPublicMailBodies(env, mailIds);
+    const bodiesPromise = listSafeMailBodies(env, mailIds, { waitUntil: query.waitUntil });
     const attachmentRowsPromise = query.includeAttachments
       ? env.DB.prepare(
         `SELECT id, mail_id AS mailId, filename, mime_type AS mimeType, size, content_id AS contentId,
@@ -341,7 +351,8 @@ async function listPublicMails(c: AppContext) {
     to,
     domain: toDomain,
     hasAttachments,
-    includeAttachments
+    includeAttachments,
+    waitUntil: waitUntilFromContext(c)
   });
 
   return publicOk(c, page.items.map((item) => publicMailFullItem(item, includeAttachments)), {
@@ -378,7 +389,9 @@ async function getLatestMail(c: AppContext) {
 }
 
 async function getMailDetail(c: AppContext) {
-  const mail = await getMailDetailView(c.env, c.req.param('id') || '');
+  const mail = await getMailDetailView(c.env, c.req.param('id') || '', {
+    waitUntil: waitUntilFromContext(c)
+  });
   return mail ? apiOk(c, mail) : jsonFail(c, '邮件不存在', 404);
 }
 

@@ -123,6 +123,9 @@ describe('schema migrations', () => {
       expect(applied.has(migration.version)).toBe(true);
     }
     expect(calls.some((call) => call.sql.includes('CREATE TABLE IF NOT EXISTS mail_public_bodies'))).toBe(true);
+    expect(calls.some((call) => call.sql.includes('CREATE TABLE IF NOT EXISTS mail_safe_bodies'))).toBe(true);
+    expect(calls.some((call) => call.sql.includes('INSERT OR REPLACE INTO mail_safe_bodies') && call.sql.includes('FROM mail_public_bodies'))).toBe(true);
+    expect(calls.some((call) => call.sql.includes('DROP TABLE IF EXISTS mail_public_bodies'))).toBe(true);
   });
 
   it('迁移完成后写入 schema ready marker，公开 API 可快速判定', async () => {

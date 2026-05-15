@@ -49,6 +49,10 @@ export interface MailDetailView {
   attachments: MailAttachmentView[];
 }
 
+export interface MailDetailViewOptions {
+  waitUntil?: (promise: Promise<unknown>) => void;
+}
+
 function shareKey(token: string) {
   return `${sharePrefix}${token}`;
 }
@@ -82,7 +86,7 @@ function expiresAt(ttlHours: number) {
   return new Date(Date.now() + ttlHours * 60 * 60 * 1000).toISOString();
 }
 
-export async function getMailDetailView(env: Env, mailId: string): Promise<MailDetailView | null> {
+export async function getMailDetailView(env: Env, mailId: string, options: MailDetailViewOptions = {}): Promise<MailDetailView | null> {
   const row = await env.DB.prepare(
     `SELECT id, message_id AS messageId, from_addr AS fromAddr, from_name AS fromName,
             to_addr AS toAddr, domain, received_by_addr AS receivedByAddr, is_forwarded AS isForwarded,
@@ -98,7 +102,7 @@ export async function getMailDetailView(env: Env, mailId: string): Promise<MailD
   if (!row) return null;
 
   const [body, attachments] = await Promise.all([
-    getMailBody(env, mailId),
+    getMailBody(env, mailId, { waitUntil: options.waitUntil }),
     env.DB.prepare(
       `SELECT id, filename, mime_type AS mimeType, size, content_id AS contentId,
               disposition, stored
@@ -191,10 +195,10 @@ export async function readMailShare(env: Env, token: string) {
   return record;
 }
 
-export async function getSharedMailDetail(env: Env, token: string) {
+export async function getSharedMailDetail(env: Env, token: string, options: MailDetailViewOptions = {}) {
   const share = await readMailShare(env, token);
   if (!share) return null;
-  const mail = await getMailDetailView(env, share.mailId);
+  const mail = await getMailDetailView(env, share.mailId, options);
   if (!mail) return null;
   return {
     share: {

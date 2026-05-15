@@ -155,9 +155,9 @@ describe('incoming mail', () => {
     const bodyStatement = statements.find((item) => item.sql.includes('INSERT INTO mail_bodies'));
     expect(bodyStatement?.params[1]).toContain('from');
 
-    const publicBodyStatement = statements.find((item) => item.sql.includes('INSERT INTO mail_public_bodies'));
-    expect(publicBodyStatement?.params[1]).toContain('Your invoice is ready');
-    expect(String(publicBodyStatement?.params[2])).not.toContain('<script');
+    const safeBodyStatement = statements.find((item) => item.sql.includes('INSERT INTO mail_safe_bodies'));
+    expect(safeBodyStatement?.params[1]).toContain('Your invoice is ready');
+    expect(String(safeBodyStatement?.params[2])).not.toContain('<script');
 
     const bodyChunkStatement = statements.find((item) => item.sql.includes('INSERT INTO mail_body_chunks') && item.params[1] === 'text');
     expect(bodyChunkStatement?.params[3]).toContain('Your invoice is ready');
@@ -228,7 +228,7 @@ describe('incoming mail', () => {
     expect(events.indexOf('batch')).toBeGreaterThanOrEqual(0);
     expect(events.indexOf('r2:mail/mail_1/a.txt')).toBeLessThan(events.indexOf('batch'));
     expect(bucketDelete).toHaveBeenCalledWith('mail/mail_1/a.txt');
-    expect(prepare.mock.calls.some(([sql]) => String(sql).includes('DELETE FROM mail_public_bodies'))).toBe(true);
+    expect(prepare.mock.calls.some(([sql]) => String(sql).includes('DELETE FROM mail_safe_bodies'))).toBe(true);
   });
 
   it('删除收件箱邮件时 R2 失败不会删除 D1 记录', async () => {

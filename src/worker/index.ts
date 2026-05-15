@@ -96,7 +96,7 @@ export default {
       await ensureMigrated(env);
       if (await consumeShareAccessRateLimit(req, env)) return renderShareRateLimitedPage();
       const allowRemoteImages = url.searchParams.get('remote') === 'true';
-      return renderSharePage(env, decodeURIComponent(sharePageMatch[1]), allowRemoteImages);
+      return renderSharePage(env, decodeURIComponent(sharePageMatch[1]), allowRemoteImages, (promise) => ctx.waitUntil(promise));
     }
     return env.ASSETS.fetch(req);
   },

@@ -47,8 +47,8 @@ function createEnv() {
   const body = { headersJson: '{}' };
   const chunks = {
     results: [
-      { kind: 'text', chunkIndex: 0, content: '正文' },
-      { kind: 'html', chunkIndex: 0, content: '<p>正文</p><img src="https://cdn.example.com/logo.png" alt="Logo"><script>alert(1)</script>' }
+      { mailId: 'mail_1', kind: 'text', chunkIndex: 0, content: '正文' },
+      { mailId: 'mail_1', kind: 'html', chunkIndex: 0, content: '<p>正文</p><img src="https://cdn.example.com/logo.png" alt="Logo"><script>alert(1)</script>' }
     ]
   };
   const attachments = {
@@ -70,6 +70,7 @@ function createEnv() {
         first: vi.fn(async () => {
           if (sql.includes('SELECT id FROM mails')) return { id: 'mail_1' };
           if (sql.includes('FROM mail_bodies')) return body;
+          if (sql.includes('FROM mail_safe_bodies')) return null;
           if (sql.includes('FROM mail_attachments') && sql.includes('object_key')) {
             return params[0] === 'att_1' ? { filename: 'invoice.pdf', mimeType: 'application/pdf', objectKey: 'attachments/mail_1/att_1.pdf' } : null;
           }
@@ -77,7 +78,8 @@ function createEnv() {
         }),
         all: vi.fn(async () => (sql.includes('FROM mail_body_chunks') ? chunks : attachments))
       }))
-    }))
+    })),
+    batch: vi.fn(async () => [])
   };
   const object = {
     body: new ReadableStream({

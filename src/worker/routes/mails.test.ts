@@ -105,6 +105,7 @@ function createEnv() {
       }),
       all: vi.fn(async () => {
         if (sql.includes('FROM mail_attachments')) return attachments;
+        if (sql.includes('FROM mail_safe_bodies')) return { results: [] };
         if (sql.includes('FROM mail_body_chunks')) return chunks;
         return { results: rows };
       })
@@ -114,7 +115,7 @@ function createEnv() {
 
   return {
     env: {
-      DB: { prepare },
+      DB: { prepare, batch: vi.fn(async () => []) },
       KV: {
         get: vi.fn(async (key: string) => kv.get(key) || (key === 'config:system' ? JSON.stringify({
           cleanupEnabled: true,
